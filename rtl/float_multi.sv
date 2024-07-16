@@ -22,6 +22,7 @@ module float_multi #(
   localparam int MW = $bits(result_o.man);  // Mantissa Width
   localparam int MPW = MW + 1;  // Mantissa +1 Width
   localparam int MMPW = 2 * $bits(MPW);  // Mult Mantissa +1 Width
+  localparam int BIAS = $bits(result_o.exp); // bias
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-SIGNALS
@@ -30,6 +31,7 @@ module float_multi #(
   // Contains the result after interger multiplying {1,manA} & {1,manB}
   logic [MMPW-1:0] int_mult_result;
   logic [MMPW-1:0] int_mult_result_shifted;
+  logic [BIAS-2:0] expA, expB ;
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-ASSIGNMENTS
@@ -39,7 +41,7 @@ module float_multi #(
   assign result_o.sig = opa_i.sig ^ opb_i.sig;
 
   // Integer multiplication of mantissas
-  assign int_mult_result = {1, opa_i.man} * {1, opb_i.man};
+  assign int_mult_result = {1'b1, opa_i.man} * {1'b1, opb_i.man};
 
   // Right-shifted version of `int_mult_result`
   assign int_mult_result_shifted = int_mult_result >> 1;
@@ -49,7 +51,10 @@ module float_multi #(
                           int_mult_result_shifted[2*MW-1:MW] :
                           int_mult_result[2*MW-1:MW];
 
+  // Adding Bias in Exponent
+  assign expA = opa_i.exp + ((1<<(opa_i.exp-1))-1);
+  assign expB = opb_i.exp + ((1<<(opb_i.exp-1))-1);
   // Exponent calculation based on input operands and intermediate result
-  assign result_o.exp = opa_i.exp + opb_i.exp + int_mult_result[MMPW-1];
+  assign result_o.exp = expA + expB + int_mult_result[MMPW-1];
 
 endmodule
