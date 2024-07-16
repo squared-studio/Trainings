@@ -1,0 +1,22 @@
+name: Verible_Verilog_Lint
+
+on:
+  push:
+    branches: []
+
+jobs:
+  Verible_Verilog_Lint:
+    runs-on: [make, verible]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Lint
+      shell: bash
+      run: |
+        make lint
+
+    - name: Fail if Lint Issue
+      shell: bash
+      run: |
+        [[ -s ___LINT_ERROR ]] && exit 1 || exit 0
