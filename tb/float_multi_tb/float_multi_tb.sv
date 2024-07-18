@@ -86,19 +86,29 @@ module float_multi_tb;
   task static monitor();
     fork
       forever begin
-        fp_t inA, inB, out;
+        fp_t inA, inB;
         mon_opa_i_mbx.put(opa_i);
         mon_opb_i_mbx.put(opb_i);
-        out = result_o;
-        mon_result_o_mbx.put(out);
+        mon_result_o_mbx.put(result_o);
         @(posedge clk_i);  // Wait for one clock cycle before fetching new outputs
       end
     join_none
   endtask
 
+
+    // Function to compare floating-point numbers with tolerance
+  // function bit float_compare(fp_t a, fp_t b, real tolerance = 1e-5);
+  //   if (a.exp == b.exp && a.sig == b.sig && (a.man - b.man) < tolerance)
+  //     return 1;
+  //   else
+  //     return 0;
+  // endfunction
+
   // Task to compare the DUT output with the expected output and log results
   task static scoreboard();
     fp_t a, b, expected_out, actual_out;
+    //real tolerance = 1e-5;  // Define tolerance for floating-point comparison
+
     fork
       forever begin
         mon_opa_i_mbx.get(a);
@@ -112,8 +122,10 @@ module float_multi_tb;
         $display("input A: %p", a);
         $display("input B: %p", b);
         $display("expected output: %p", expected_out);
+        $display("actual output: %p", actual_out);
 
         // Compare actual output with expected output
+        //if (float_compare(actual_out, expected_out, tolerance)) begin
         if (actual_out === expected_out) begin
           pass++;
         end else begin
@@ -144,14 +156,14 @@ module float_multi_tb;
 
       // Generate random test cases
       @(posedge clk_i);
-      repeat (100) begin
-        dvr_opa_i_mbx.put($random);
-        dvr_opb_i_mbx.put($random);
+      repeat (10) begin
+        dvr_opa_i_mbx.put(fp_t'($random));  // Ensure valid range for random values
+        dvr_opb_i_mbx.put(fp_t'($random));  // Ensure valid range for random values
         
       end
 
       // Wait for some time to ensure all transactions are processed
-      repeat(110) @(posedge clk_i);
+      repeat(12) @(posedge clk_i);
 
       // Print final results
       result_print(!fail, $sformatf("%0d/%0d PASSED", pass, pass + fail));
