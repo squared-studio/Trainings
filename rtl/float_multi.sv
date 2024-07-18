@@ -22,7 +22,9 @@ module float_multi #(
   localparam int MW = $bits(result_o.man);  // Mantissa Width
   localparam int MPW = MW + 1;  // Mantissa +1 Width
   localparam int MMPW = 2 * $bits(MPW);  // Mult Mantissa +1 Width
-  localparam int BIAS = $bits(result_o.exp); // bias
+  localparam int EXPW = $bits(result_o.exp);  // Exponent Width
+  localparam int BIAS = (1 << (EXPW - 1)) - 1; // Bias value
+  localparam logic [EXPW-1:0] MAX_EXP = {EXPW{1'b1}}; // Maximum exponent value (all bits set)
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-SIGNALS
@@ -52,9 +54,23 @@ module float_multi #(
                           int_mult_result[2*MW-1:MW];
 
   // Adding Bias in Exponent
-  assign expA = opa_i.exp + ((1<<(opa_i.exp-1))-1);
-  assign expB = opb_i.exp + ((1<<(opb_i.exp-1))-1);
+  assign expA = opa_i.exp + BIAS;
+  assign expB = opb_i.exp + BIAS;
   // Exponent calculation based on input operands and intermediate result
-  assign result_o.exp = expA + expB + int_mult_result[MMPW-1];
+  assign result_o.exp = expA + expB + int_mult_result[MMPW-1] - BIAS;
+
+    // Check if result_o.man and result_o.exp are zero
+  always_comb begin
+    if (result_o.man == 0 && result_o.exp == 0) begin
+      result_o = '{sig: 0, man: 0, exp: 0}; // Set the entire result to zero
+    end
+    else if (result_o.man == 0 && result_o.exp == MAX_EXP) begin
+      result_o = '{sig: result_o.sig, man: 0, exp: MAX_EXP}; // Set result to infinity
+    end
+    else if (result_o.man != 0 && result_o.exp == MAX_EXP) begin
+      result_o = '{sig: result_o.sig, man: {MW{1'b1}}, exp: MAX_EXP}; // Set result to NaN
+    end
+
+  end
 
 endmodule

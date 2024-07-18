@@ -1,88 +1,163 @@
 /*
-Description
-Author : Md Abdullah Al Samad (mdsam.raian@gmail.com)
+Description: Testbench for float_multi module
+Author: Md Abdullah Al Samad (mdsam.raian@gmail.com)
 */
+
+`include "fp_pkg.sv"
 
 module float_multi_tb;
 
+  // Uncomment to enable waveform dump file
   //`define ENABLE_DUMPFILE
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-IMPORTS
   //////////////////////////////////////////////////////////////////////////////////////////////////
 
-  // bring in the testbench essentials functions and macros
-  `include "vip/tb_ess.sv"
-
-  //////////////////////////////////////////////////////////////////////////////////////////////////
-  //-LOCALPARAMS
-  //////////////////////////////////////////////////////////////////////////////////////////////////
+  import fp_pkg::fp16_t;  // Import the floating-point package
+  `include "vip/tb_ess.sv"  // Include essential functions and macros for the testbench
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-TYPEDEFS
   //////////////////////////////////////////////////////////////////////////////////////////////////
 
+  typedef fp_pkg::fp16_t fp_t;  // Define the floating-point type
+
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-SIGNALS
   //////////////////////////////////////////////////////////////////////////////////////////////////
+  fp_t opa_i;  // First operand (floating-point value)
+  fp_t opb_i;  // Second operand (floating-point value)
+  fp_t result_o;  // Result of the multiplication (floating-point value)
 
-  // generates static task start_clk_i with tHigh:4ns tLow:6ns
+  // Generate static clock signal clk_i with tHigh:4ns tLow:6ns
   `CREATE_CLK(clk_i, 4ns, 6ns)
-
-  logic arst_ni = 1;
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-VARIABLES
   //////////////////////////////////////////////////////////////////////////////////////////////////
+  int pass;  // Counter for passed test cases
+  int fail;  // Counter for failed test cases
 
-  //////////////////////////////////////////////////////////////////////////////////////////////////
-  //-INTERFACES
-  //////////////////////////////////////////////////////////////////////////////////////////////////
-
-  //////////////////////////////////////////////////////////////////////////////////////////////////
-  //-CLASSES
-  //////////////////////////////////////////////////////////////////////////////////////////////////
-
-  //////////////////////////////////////////////////////////////////////////////////////////////////
-  //-ASSIGNMENTS
-  //////////////////////////////////////////////////////////////////////////////////////////////////
+  // Mailboxes for communication between driver and monitor
+  mailbox #(fp_t) dvr_opa_i_mbx = new();
+  mailbox #(fp_t) dvr_opb_i_mbx = new();
+  mailbox #(fp_t) mon_opa_i_mbx = new();
+  mailbox #(fp_t) mon_opb_i_mbx = new();
+  mailbox #(fp_t) mon_result_o_mbx = new();
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-RTLS
   //////////////////////////////////////////////////////////////////////////////////////////////////
+  // Instantiate the float_multi module
+  float_multi #(.fp_t(fp16_t)) uut (
+    .opa_i(opa_i),
+    .opb_i(opb_i),
+    .result_o(result_o)
+  );
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-METHODS
   //////////////////////////////////////////////////////////////////////////////////////////////////
 
+  // Task to apply reset to the DUT
   task static apply_reset();
     #100ns;
-    arst_ni <= 0;
-    #100ns;
-    arst_ni <= 1;
+    opa_i <= '0;
+    opb_i <= '0;
     #100ns;
   endtask
 
-  //////////////////////////////////////////////////////////////////////////////////////////////////
-  //-SEQUENTIALS
-  //////////////////////////////////////////////////////////////////////////////////////////////////
+  // Task to drive inputs to the DUT
+  task static driver();
+    fork
+      forever begin
+        fp_t inA, inB;
+        dvr_opa_i_mbx.get(inA);
+        dvr_opb_i_mbx.get(inB);
+        opa_i <= inA;
+        opb_i <= inB;
+        @(posedge clk_i);  // Wait for one clock cycle before fetching new inputs
+      end
+    join_none
+  endtask
+
+  // Task to monitor the inputs and outputs of the DUT
+  task static monitor();
+    fork
+      forever begin
+        fp_t inA, inB, out;
+        mon_opa_i_mbx.put(opa_i);
+        mon_opb_i_mbx.put(opb_i);
+        out = result_o;
+        mon_result_o_mbx.put(out);
+        @(posedge clk_i);  // Wait for one clock cycle before fetching new outputs
+      end
+    join_none
+  endtask
+
+  // Task to compare the DUT output with the expected output and log results
+  task static scoreboard();
+    fp_t a, b, expected_out, actual_out;
+    fork
+      forever begin
+        mon_opa_i_mbx.get(a);
+        mon_opb_i_mbx.get(b);
+        mon_result_o_mbx.get(actual_out);
+
+        // Calculate expected output
+        expected_out = a * b;
+
+        // Display the inputs and expected output
+        $display("input A: %p", a);
+        $display("input B: %p", b);
+        $display("expected output: %p", expected_out);
+
+        // Compare actual output with expected output
+        if (actual_out === expected_out) begin
+          pass++;
+        end else begin
+          fail++;
+        end
+
+        $display("PASS: %d, FAIL: %d", pass, fail);
+      end
+    join_none
+  endtask
 
   //////////////////////////////////////////////////////////////////////////////////////////////////
   //-PROCEDURALS
   //////////////////////////////////////////////////////////////////////////////////////////////////
 
-  initial begin  // main initial
+    initial begin  // Main initial block
 
-    apply_reset();
-    start_clk_i();
+      // Apply reset to the DUT
+      apply_reset();
 
-    @(posedge clk_i);
-    result_print(1, "This is a PASS");
-    @(posedge clk_i);
-    result_print(0, "And this is a FAIL");
+      // Start the clock signal
+      start_clk_i();
 
-    $finish;
+      // Start the driver, monitor, and scoreboard tasks
+      driver();
+      monitor();
+      scoreboard();
 
-  end
+      // Generate random test cases
+      @(posedge clk_i);
+      repeat (100) begin
+        dvr_opa_i_mbx.put($random);
+        dvr_opb_i_mbx.put($random);
+        
+      end
 
-endmodule
+      // Wait for some time to ensure all transactions are processed
+      repeat(110) @(posedge clk_i);
+
+      // Print final results
+      result_print(!fail, $sformatf("%0d/%0d PASSED", pass, pass + fail));
+
+      // End the simulation
+      $finish;
+    end
+
+  endmodule
