@@ -8,10 +8,12 @@ ROOT        = $(shell pwd)
 TOP         = $(shell cat ___TOP)
 RTL         = $(shell cat ___RTL)
 TOP_DIR     = $(shell find $(realpath ./tb/) -wholename "*$(TOP)/$(TOP).sv" | sed "s/\/$(TOP).sv//g")
-TBF_LIB     = $(shell find $(TOP_DIR) -name "*.v" -o -name "*.sv")
-DES_LIB     = $(shell find $(realpath ./rtl/) -name "*.v" -o -name "*.sv")
+TB_LIB      = $(shell find $(TOP_DIR) -name "*.sv")
+DES_LIB     = $(shell find $(realpath ./rtl/) -name "*.sv")
+DES_LIB    += $(shell find $(realpath ./sub/) -wholename "*/rtl/*.sv" -type f | sed "s/.*\/sub\/.*\/sub\/.*//g")
 INTF_LIB    = $(shell find $(realpath ./intf/) -name "*.sv")
-INC_DIR     = $(realpath ./inc)
+INTF_LIB   += $(shell find $(realpath ./sub/) -wholename "*/intf/*.sv" -type f | sed "s/.*\/sub\/.*\/sub\/.*//g")
+INC_DIR     = $(shell find $(realpath ./) -path "*/inc" | sed "s/^/-i /g" | sed "s/.*\/docs\/.*//g" | sed "s/.*\/sub\/.*\/sub\/.*//g")
 RTL_FILE    = $(shell find $(realpath ./rtl/) -name "$(RTL).sv")
 CONFIG      = default
 CONFIG_PATH = $(TOP_DIR)/config/$(CONFIG)
@@ -110,9 +112,6 @@ help:
 	@echo -e "\033[3;30mTo run a test with iverilog, type:\033[0m"
 	@echo -e "\033[1;38mmake iverilog TOP=<tb_top>\033[0m"
 	@echo -e ""
-	@echo -e "\033[3;30mTo generate a list of all Verilog/SystemVerilog files, type:\033[0m"
-	@echo -e "\033[1;38mmake gen_check_list\033[0m"
-	@echo -e ""
 	@echo -e "\033[3;30mTo generate flist of an RTL, type:\033[0m"
 	@echo -e "\033[1;38mmake flist RTL=<rtl>\033[0m"
 	@echo -e ""
@@ -120,19 +119,22 @@ help:
 	@echo -e "\033[1;38mmake update_doc_list\033[0m"
 	@echo -e ""
 
-.PHONY: gen_check_list
-gen_check_list:
-	@$(eval CHECK_LIST := $(shell find inc -name "*.v" -o -name "*.vh" -o -name "*.sv" -o -name "*.svh"))
-	@$(eval CHECK_LIST += $(shell find rtl -name "*.v" -o -name "*.vh" -o -name "*.sv" -o -name "*.svh"))
-	@$(eval CHECK_LIST += $(shell find intf -name "*.v" -o -name "*.vh" -o -name "*.sv" -o -name "*.svh"))
-	@$(eval CHECK_LIST += $(shell find tb -name "*.v" -o -name "*.vh" -o -name "*.sv" -o -name "*.svh"))
-	@($(foreach word, $(CHECK_LIST), echo "[](./$(word))";)) | $(CLIP)
-	@echo -e "\033[2;35mList copied to clipboard\033[0m"
-
 .PHONY: clean
 clean:
 	@- echo -e "$(CLEAN_TARGETS)" | sed "s/  //g" | sed "s/ /\nremoving /g"
 	@rm -rf $(CLEAN_TARGETS)
+
+.PHONY: duplicate_check
+duplicate_check:
+	@$(if $(filter $(EX), $(shell cat ./___duplicate_list)), \
+	echo -e "\033[1;31m$(EX) has multiple copies\033[0m" \
+	&& echo -e "\033[1;31m$(EX) has multiple copies\033[0m" >> ___CI_ERROR, \
+	echo "$(EX)" >> ./___duplicate_list)
+
+.PHONY: find_duplicates
+find_duplicates:
+	@>___duplicate_list
+	@$(foreach file, $(DES_LIB), $(MAKE) duplicate_check EX=$(shell basename $(file));)
 
 ####################################################################################################
 # FLIST (Vivado)
@@ -140,14 +142,14 @@ clean:
 
 define compile_rtl
 $(eval SUB_LIB := $(shell echo "$(wordlist 1, 25,$(COMPILE_LIB))"))
-xvlog -i $(INC_DIR) -sv $(SUB_LIB)
+xvlog $(INC_DIR) -sv $(SUB_LIB)
 $(eval COMPILE_LIB := $(wordlist 26, $(words $(COMPILE_LIB)), $(COMPILE_LIB)))
 $(if $(COMPILE_LIB), $(call compile_rtl))
 endef
 
 .PHONY: find_rtl
 find_rtl:
-	@find $(realpath ./rtl/) -iname "*$(RTL)*.sv"
+	@$(foreach file, ${DES_LIB}, $(if $(findstring ${RTL}, ${file}), echo "$(file)",:);)
 
 .PHONY: list_modules
 list_modules: clean
@@ -228,7 +230,7 @@ simulate: clean
 
 define compile_tb
 $(eval SUB_LIB := $(shell echo "$(wordlist 1, 25,$(COMPILE_LIB))"))
-cd $(TOP_DIR); xvlog -f $(CONFIG_PATH)/xvlog -d SIMULATION --define CONFIG=\"$(CONFIG)\" -i $(INC_DIR) -sv $(SUB_LIB)
+cd $(TOP_DIR); xvlog -f $(CONFIG_PATH)/xvlog -d SIMULATION --define CONFIG=\"$(CONFIG)\" $(INC_DIR) -sv $(SUB_LIB)
 $(eval COMPILE_LIB := $(wordlist 26, $(words $(COMPILE_LIB)), $(COMPILE_LIB)))
 $(if $(COMPILE_LIB), $(call compile_tb))
 endef
@@ -238,15 +240,15 @@ vivado:
 	@$(MAKE) config_touch
 	@touch $(TOP_DIR)/script.sh
 	@cd $(TOP_DIR); ./script.sh
-	@$(eval COMPILE_LIB := $(INTF_LIB) $(DES_LIB) $(TBF_LIB))
+	@$(eval COMPILE_LIB := $(INTF_LIB) $(DES_LIB) $(TB_LIB))
 	@$(call compile_tb)
 	@cd $(TOP_DIR); xelab -f $(CONFIG_PATH)/xelab $(TOP) -s top
-	@cd $(TOP_DIR); xsim top -f $(CONFIG_PATH)/xsim -runall
+	@cd $(TOP_DIR); xsim top -f $(CONFIG_PATH)/xsim -runall -log xsim_$(CONFIG).log
 
 .PHONY: rtl_init_sim
 rtl_init_sim: clean
 	@echo "$(RTL)" > ___RTL
-	@xvlog -d SIMULATION -i $(INC_DIR) -sv -L RTL=$(DES_LIB) 
+	@xvlog -d SIMULATION $(INC_DIR) -sv -L RTL=$(DES_LIB) 
 	@xelab $(RTL) -s top
 	@xsim top -runall
 
@@ -255,7 +257,7 @@ rtl_init_sim: clean
 ####################################################################################################
 
 .PHONY: CI
-CI: clean ci_vivado_run ci_vivado_collect ci_print
+CI: clean ci_vivado_run ci_vivado_collect ci_print find_duplicates
 
 include ci_run
 
@@ -287,25 +289,6 @@ ci_print:
 	@echo -e "\033[1;32mCONTINUOUS INTEGRATION SUCCESSFULLY COMPLETE\033[0m";
 	@cat ___CI_REPORT
 	@grep -r "FAIL" ./___CI_REPORT | tee ___CI_ERROR
-
-####################################################################################################
-# Lint (Verilator)
-####################################################################################################
-
-.PHONY: verilator_lint
-verilator_lint:
-	@($(foreach word, $(DES_LIB), \
-		verilator --lint-only $(DES_LIB) --top-module $(shell basename -s .sv $(word));))
-
-####################################################################################################
-# Simulate (iverilog)
-####################################################################################################
-
-.PHONY: iverilog
-iverilog: clean
-	@echo "$(TOP)" > ___TOP
-	@cd $(TOP_DIR); iverilog -I $(INC_DIR) -g2012 -o $(TOP).out -s $(TOP) -l $(DES_LIB) $(TBF_LIB)
-	@cd $(TOP_DIR); vvp $(TOP).out
 
 ####################################################################################################
 # Waveform (GTKWave)
@@ -469,7 +452,8 @@ clear_all_docs:
 
 .PHONY: create_all_docs
 create_all_docs: clear_all_docs
-	@$(foreach file, $(DES_LIB), $(if $(shell echo $(file) | sed "s/.*__no_upload__.*//g"), $(MAKE) gen_doc FILE=$(file), echo "");)
+	@$(foreach file, $(shell find $(realpath ./rtl/) -type f -wholename "*/rtl/*.sv"), \
+		$(if $(shell echo $(file) | sed "s/.*__no_upload__.*//g"), $(MAKE) gen_doc FILE=$(file), echo "");)
 
 .PHONY: get_rtl_doc_header
 get_rtl_doc_header:
